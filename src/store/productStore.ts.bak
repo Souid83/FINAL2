@@ -61,49 +61,34 @@ export const useProductStore = create<ProductStore>((set, get) => ({
   addProduct: async (product: ProductInsert) => {
     set({ isLoading: true, error: null });
     try {
-      console.log("Raw CSV Product Data:", product);
+      console.log("Product received in addProduct:", product);
       
       if (!product || typeof product !== "object") {
         console.error("Received invalid product data:", product);
         return null;
       }
-
-      const formattedProduct = {
-        ...product,
-        sku: product.sku?.trim() || null,
-        name: product.name?.trim() || null,
-        purchase_price_with_fees: product.purchase_price_with_fees ? parseFloat(product.purchase_price_with_fees) : 0,
-        retail_price: product.retail_price ? parseFloat(product.retail_price) : 0,
-        pro_price: product.pro_price ? parseFloat(product.pro_price) : 0,
-        weight_grams: product.weight_grams ? parseInt(product.weight_grams) : 0,
-        stock: product.stock ? parseInt(product.stock) : 0,
-        stock_alert: product.stock_alert ? parseInt(product.stock_alert) : 0,
-        width_cm: product.width_cm ? parseFloat(product.width_cm) : 0,
-        height_cm: product.height_cm ? parseFloat(product.height_cm) : 0,
-        depth_cm: product.depth_cm ? parseFloat(product.depth_cm) : 0,
-      };
-
-      if (!formattedProduct.sku) {
-        console.error("SKU is missing after formatting, full product data:", formattedProduct);
+      if (!product.sku) {
+        console.error("SKU is missing, full product data:", product);
         return null;
       }
-      
-      console.log("Checking product with SKU:", formattedProduct.sku);
+
+      console.log("Checking product with SKU:", product.sku);
       
       const { data: existingProduct } = await supabase
         .from("products")
         .select("id, stock")
-        .eq("sku", formattedProduct.sku)
+        .eq("sku", product.sku)
         .single();
 
       if (existingProduct) {
         // Mettre à jour le stock et les autres informations du produit existant
-        const updatedStock = existingProduct.stock + formattedProduct.stock;
+        const updatedStock = existingProduct.stock + (product.stock ? parseInt(product.stock) : 0);
         const { data, error } = await supabase
           .from("products")
           .update({
-            ...formattedProduct,
-            stock: updatedStock
+            ...product,
+            stock: updatedStock,
+            weight_grams: product.weight_grams ? parseInt(product.weight_grams) : 0
           })
           .eq("id", existingProduct.id)
           .select("*")
@@ -115,6 +100,19 @@ export const useProductStore = create<ProductStore>((set, get) => ({
         set({ products, isLoading: false });
         return data;
       }
+
+      const formattedProduct = {
+        ...product,
+        purchase_price_with_fees: product.purchase_price_with_fees ? parseFloat(product.purchase_price_with_fees) : 0,
+        retail_price: product.retail_price ? parseFloat(product.retail_price) : 0,
+        pro_price: product.pro_price ? parseFloat(product.pro_price) : 0,
+        weight_grams: product.weight_grams ? parseInt(product.weight_grams) : 0,
+        stock: product.stock ? parseInt(product.stock) : 0,
+        stock_alert: product.stock_alert ? parseInt(product.stock_alert) : 0,
+        width_cm: product.width_cm ? parseFloat(product.width_cm) : 0,
+        height_cm: product.height_cm ? parseFloat(product.height_cm) : 0,
+        depth_cm: product.depth_cm ? parseFloat(product.depth_cm) : 0,
+      };
 
       const { data, error } = await supabase
         .from('products')

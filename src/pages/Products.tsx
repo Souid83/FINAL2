@@ -3,7 +3,6 @@ import { ProductList } from '../components/Products/ProductList';
 import { useProductStore } from '../store/productStore';
 import { ProductSearch } from '../components/Search/ProductSearch';
 import { Download } from 'lucide-react';
-import { CSVImport } from '../components/Products/CSVImport';
 import Fuse from 'fuse.js';
 import type { Database } from '../types/supabase';
 
@@ -16,7 +15,7 @@ type Product = Database['public']['Tables']['products']['Row'] & {
 };
 
 export const Products: React.FC = () => {
-  const { products, fetchProducts, addProducts } = useProductStore();
+  const { products, fetchProducts } = useProductStore();
   const [filteredProducts, setFilteredProducts] = useState<Product[]>(products);
   const [currentSearchQuery, setCurrentSearchQuery] = useState('');
 
@@ -74,15 +73,6 @@ export const Products: React.FC = () => {
 
     const results = fuse.search(query);
     setFilteredProducts(results.map(result => result.item));
-  };
-
-  const handleImportProducts = async (products: any[]) => {
-    try {
-      await addProducts(products);
-      await fetchProducts(); // Refresh the product list
-    } catch (error) {
-      console.error('Error importing products:', error);
-    }
   };
 
   const exportProducts = (productsToExport: Product[]) => {
@@ -208,8 +198,6 @@ export const Products: React.FC = () => {
           </div>
         </div>
       </div>
-
-      <CSVImport onImport={handleImportProducts} />
       <ProductList products={filteredProducts} />
     </div>
   );

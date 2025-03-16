@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useProductStore } from '../../store/productStore';
 import { useCategoryStore } from '../../store/categoryStore';
 import { ImageManager } from './ImageManager';
-import { Image as ImageIcon } from 'lucide-react';
+import { Image as ImageIcon, Download, Upload, ArrowDown } from 'lucide-react';
 import { StockAllocationModal } from './StockAllocationModal';
 
 const TVA_RATE = 0.20;
@@ -158,13 +158,11 @@ export const ProductForm: React.FC<ProductFormProps> = ({
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
 
-    // Allow all characters for description
     if (name === 'description') {
       setFormData(prev => ({ ...prev, [name]: value }));
       return;
     }
 
-    // For numeric fields, only allow numbers
     const numericFields = [
       'ean',
       'weight_grams',
@@ -177,13 +175,12 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     ];
 
     if (numericFields.includes(name)) {
-      if (/^\d*$/.test(value)) { // Only allow numbers
+      if (/^\d*$/.test(value)) {
         setFormData(prev => ({ ...prev, [name]: value }));
       }
       return;
     }
 
-    // For all other fields
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
@@ -199,15 +196,14 @@ export const ProductForm: React.FC<ProductFormProps> = ({
       }
       return newData;
     });
-};
-
+  };
 
   const updatePriceInputs = (
     type: 'retail' | 'pro',
     field: 'price' | 'margin_percent' | 'margin_amount',
     value: string
   ) => {
-    if (!/^\d*$/.test(value)) return; // Only allow numbers
+    if (!/^\d*$/.test(value)) return;
 
     const purchasePrice = parseFloat(formData.purchase_price_with_fees);
     if (isNaN(purchasePrice) || purchasePrice <= 0) return;
@@ -249,17 +245,100 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     }
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const rows = text.split('\n');
+      const headers = rows[0].split(',');
+      const products = rows.slice(1).map(row => {
+        const values = row.split(',');
+        const product: any = {};
+        headers.forEach((header, index) => {
+          product[header.trim()] = values[index]?.trim() || '';
+        });
+        return product;
+      });
+
+      for (const product of products) {
+        await addProduct(product);
+      }
+
+      if (onSubmitSuccess) {
+        onSubmitSuccess();
+      }
+    } catch (error) {
+      console.error('Error importing CSV:', error);
+      setError('Une erreur est survenue lors de l\'importation du fichier CSV');
+    }
+  };
+
+  const downloadSampleCSV = () => {
+    const headers = [
+      'name',
+      'sku',
+      'purchase_price_with_fees',
+      'retail_price',
+      'pro_price',
+      'weight_grams',
+      'location',
+      'ean',
+      'stock',
+      'stock_alert',
+      'description',
+      'width_cm',
+      'height_cm',
+      'depth_cm',
+      'category_type',
+      'category_brand',
+      'category_model'
+    ];
+
+    const sampleData = [
+      'iPhone 14 Pro Max',
+      'IP14PM-128-BLK',
+      '900',
+      '1200',
+      '1100',
+      '240',
+      'STOCK-A1',
+      '123456789012',
+      '10',
+      '3',
+      'iPhone 14 Pro Max 128Go Noir',
+      '7.85',
+      '16.07',
+      '0.78',
+      'SMARTPHONE',
+      'APPLE',
+      'IPHONE 14 PRO MAX'
+    ];
+
+    const csvContent = [
+      headers.join(','),
+      sampleData.join(',')
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'products_template.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    // Validate category selection
     if (!selectedCategory.type || !selectedCategory.brand || !selectedCategory.model) {
       setError('Veuillez sélectionner une catégorie complète (Nature, Marque et Modèle)');
       return;
     }
 
-    // Validate numeric fields
     const numericFields = [
       { name: 'ean', label: 'Code EAN' },
       { name: 'weight_grams', label: 'Poids' },
@@ -278,7 +357,6 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     try {
       let categoryId = null;
       
-      // Category is now guaranteed to be complete
       const category = await addCategory({
         type: selectedCategory.type,
         brand: selectedCategory.brand,
@@ -350,366 +428,397 @@ export const ProductForm: React.FC<ProductFormProps> = ({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6 bg-white rounded-lg shadow p-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-xl font-semibold">
-          {initialProduct ? 'Modifier le produit' : 'Ajouter un produit'}
-        </h2>
-      </div>
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-          {error}
-        </div>
-      )}
-
-      <div className="bg-gray-50 p-4 rounded-lg">
-        <h3 className="text-lg font-medium text-gray-900 mb-4">Catégorie du produit</h3>
-        <div className="grid grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Nature du produit <span className="text-red-500">*</span>
-            </label>
-            <select
-              value={selectedCategory.type}
-              onChange={(e) => handleCategoryChange('type', e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white"
-              required
-            >
-              <option value="">Sélectionner la nature</option>
-              {uniqueTypes.map(type => (
-                <option key={type} value={type}>{type}</option>
-              ))}
-            </select>
+    <div className="space-y-6">
+      <div className="bg-blue-50 p-4 rounded-lg">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <p className="text-blue-700">Vous avez plusieurs produits à créer ? 📦</p>
+            <ArrowDown className="text-blue-500 animate-bounce" size={20} />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Marque <span className="text-red-500">*</span>
-            </label>
-            <select
-              value={selectedCategory.brand}
-              onChange={(e) => handleCategoryChange('brand', e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white"
-              disabled={!selectedCategory.type}
-              required
+          <div className="flex items-center space-x-4">
+            <button
+              type="button"
+              onClick={downloadSampleCSV}
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
             >
-              <option value="">Sélectionner la marque</option>
-              {uniqueBrands.map(brand => (
-                <option key={brand} value={brand}>{brand}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Modèle <span className="text-red-500">*</span>
+              <Download size={18} />
+              Télécharger un modèle CSV 📥
+            </button>
+            <label className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 cursor-pointer">
+              <Upload size={18} />
+              Importer un fichier CSV 📂
+              <input
+                type="file"
+                onChange={handleFileUpload}
+                accept=".csv"
+                className="hidden"
+              />
             </label>
-            <select
-              value={selectedCategory.model}
-              onChange={(e) => handleCategoryChange('model', e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white"
-              disabled={!selectedCategory.brand}
-              required
-            >
-              <option value="">Sélectionner le modèle</option>
-              {uniqueModels.map(model => (
-                <option key={model} value={model}>{model}</option>
-              ))}
-            </select>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Nom du produit
-          </label>
-          <input
-            type="text"
-            name="name"
-            value={formData.name}
-            onChange={handleChange}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md"
-            required
-            placeholder="Nom du produit"
-          />
+      <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-6">
+        <div className="flex justify-between items-center">
+          <h2 className="text-xl font-semibold">
+            {initialProduct ? 'Modifier le produit' : 'Ajouter un produit'}
+          </h2>
         </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            SKU
-          </label>
-          <input
-            type="text"
-            name="sku"
-            value={formData.sku}
-            onChange={handleChange}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md"
-            required
-            placeholder="SKU"
-          />
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+            {error}
+          </div>
+        )}
+
+        <div className="bg-gray-50 p-4 rounded-lg">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Catégorie du produit</h3>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Nature du produit <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={selectedCategory.type}
+                onChange={(e) => handleCategoryChange('type', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white"
+                required
+              >
+                <option value="">Sélectionner la nature</option>
+                {uniqueTypes.map(type => (
+                  <option key={type} value={type}>{type}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Marque <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={selectedCategory.brand}
+                onChange={(e) => handleCategoryChange('brand', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white"
+                disabled={!selectedCategory.type}
+                required
+              >
+                <option value="">Sélectionner la marque</option>
+                {uniqueBrands.map(brand => (
+                  <option key={brand} value={brand}>{brand}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Modèle <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={selectedCategory.model}
+                onChange={(e) => handleCategoryChange('model', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white"
+                disabled={!selectedCategory.brand}
+                required
+              >
+                <option value="">Sélectionner le modèle</option>
+                {uniqueModels.map(model => (
+                  <option key={model} value={model}>{model}</option>
+                ))}
+              </select>
+            </div>
+          </div>
         </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Localisation
-          </label>
-          <input
-            type="text"
-            name="location"
-            value={formData.location}
-            onChange={(e) => setFormData(prev => ({ 
-              ...prev, 
-              location: e.target.value.toUpperCase() 
-            }))}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md"
-            placeholder="EMPLACEMENT"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            EAN
-          </label>
-          <input
-            type="text"
-            name="ean"
-            value={formData.ean}
-            onChange={handleChange}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md"
-            placeholder="Code EAN"
-            required
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Poids (grammes)
-          </label>
-          <input
-            type="text"
-            name="weight_grams"
-            value={formData.weight_grams}
-            onChange={handleChange}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md"
-            required
-            placeholder="Poids en grammes"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Prix d'achat HT
-          </label>
-          <div className="relative">
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Nom du produit
+            </label>
             <input
               type="text"
-              name="purchase_price_with_fees"
-              value={formData.purchase_price_with_fees}
+              name="name"
+              value={formData.name}
               onChange={handleChange}
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
               required
-              placeholder="Prix d'achat"
+              placeholder="Nom du produit"
             />
-            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-              HT
-            </span>
           </div>
-        </div>
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Prix de vente magasin
-        </label>
-        <div className="grid grid-cols-3 gap-4">
-          <div className="relative">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              SKU
+            </label>
             <input
               type="text"
-              value={retailPrice.ht}
-              onChange={(e) => updatePriceInputs('retail', 'price', e.target.value)}
-              className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md"
-              placeholder="Prix HT"
-            />
-            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-              HT
-            </span>
-          </div>
-          <div className="relative">
-            <input
-              type="text"
-              value={retailPrice.margin}
-              onChange={(e) => updatePriceInputs('retail', 'margin_percent', e.target.value)}
-              className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md text-green-600"
-              placeholder="Marge"
-            />
-            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-green-600">
-              %
-            </span>
-          </div>
-          <div className="relative">
-            <input
-              type="text"
-              value={retailPrice.ttc}
-              onChange={(e) => updatePriceInputs('retail', 'margin_amount', e.target.value)}
-              className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-md"
-              placeholder="Prix TTC"
-            />
-            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-              TTC
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Prix de vente pro
-        </label>
-        <div className="grid grid-cols-3 gap-4">
-          <div className="relative">
-            <input
-              type="text"
-              value={proPrice.ht}
-              onChange={(e) => updatePriceInputs('pro', 'price', e.target.value)}
-              className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md"
-              placeholder="Prix HT"
-            />
-            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-              HT
-            </span>
-          </div>
-          <div className="relative">
-            <input
-              type="text"
-              value={proPrice.margin}
-              onChange={(e) => updatePriceInputs('pro', 'margin_percent', e.target.value)}
-              className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md text-green-600"
-              placeholder="Marge"
-            />
-            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-green-600">
-              %
-            </span>
-          </div>
-          <div className="relative">
-            <input
-              type="text"
-              value={proPrice.ttc}
-              onChange={(e) => updatePriceInputs('pro', 'margin_amount', e.target.value)}
-              className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-md"
-              placeholder="Prix TTC"
-            />
-            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-              TTC
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Dimensions du produit
-        </label>
-        <div className="grid grid-cols-3 gap-4">
-          <div className="relative">
-            <input
-              type="text"
-              name="width_cm"
-              value={formData.width_cm}
+              name="sku"
+              value={formData.sku}
               onChange={handleChange}
-              className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-md"
-              placeholder="Largeur"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              required
+              placeholder="SKU"
             />
-            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-              cm
-            </span>
           </div>
-          <div className="relative">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Localisation
+            </label>
             <input
               type="text"
-              name="height_cm"
-              value={formData.height_cm}
-              onChange={handleChange}
-              className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-md"
-              placeholder="Hauteur"
+              name="location"
+              value={formData.location}
+              onChange={(e) => setFormData(prev => ({ 
+                ...prev, 
+                location: e.target.value.toUpperCase() 
+              }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              placeholder="EMPLACEMENT"
             />
-            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-              cm
-            </span>
           </div>
-          <div className="relative">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              EAN
+            </label>
             <input
               type="text"
-              name="depth_cm"
-              value={formData.depth_cm}
+              name="ean"
+              value={formData.ean}
               onChange={handleChange}
-              className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-md"
-              placeholder="Profondeur"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              placeholder="Code EAN"
+              required
             />
-            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-              cm
-            </span>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Poids (grammes)
+            </label>
+            <input
+              type="text"
+              name="weight_grams"
+              value={formData.weight_grams}
+              onChange={handleChange}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              required
+              placeholder="Poids en grammes"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Prix d'achat HT
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                name="purchase_price_with_fees"
+                value={formData.purchase_price_with_fees}
+                onChange={handleChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                required
+                placeholder="Prix d'achat"
+              />
+              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
+                HT
+              </span>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Prix de vente magasin
+          </label>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="relative">
+              <input
+                type="text"
+                value={retailPrice.ht}
+                onChange={(e) => updatePriceInputs('retail', 'price', e.target.value)}
+                className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md"
+                placeholder="Prix HT"
+              />
+              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
+                HT
+              </span>
+            </div>
+            <div className="relative">
+              <input
+                type="text"
+                value={retailPrice.margin}
+                onChange={(e) => updatePriceInputs('retail', 'margin_percent', e.target.value)}
+                className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md text-green-600"
+                placeholder="Marge"
+              />
+              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-green-600">
+                %
+              </span>
+            </div>
+            <div className="relative">
+              <input
+                type="text"
+                value={retailPrice.ttc}
+                onChange={(e) => updatePriceInputs('retail', 'margin_amount', e.target.value)}
+                className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-md"
+                placeholder="Prix TTC"
+              />
+              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
+                TTC
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Prix de vente pro
+          </label>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="relative">
+              <input
+                type="text"
+                value={proPrice.ht}
+                onChange={(e) => updatePriceInputs('pro', 'price', e.target.value)}
+                className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md"
+                placeholder="Prix HT"
+              />
+              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
+                HT
+              </span>
+            </div>
+            <div className="relative">
+              <input
+                type="text"
+                value={proPrice.margin}
+                onChange={(e) => updatePriceInputs('pro', 'margin_percent', e.target.value)}
+                className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md text-green-600"
+                placeholder="Marge"
+              />
+              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-green-600">
+                %
+              </span>
+            </div>
+            <div className="relative">
+              <input
+                type="text"
+                value={proPrice.ttc}
+                onChange={(e) => updatePriceInputs('pro', 'margin_amount', e.target.value)}
+                className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-md"
+                placeholder="Prix TTC"
+              />
+              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
+                TTC
+              </span>
+            </div>
+          </div>
+        </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Stock global
+            Dimensions du produit
           </label>
-          <input
-            type="text"
-            name="stock"
-            value={formData.stock}
-            onChange={handleChange}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md"
-            required
-            min="0"
-          />
+          <div className="grid grid-cols-3 gap-4">
+            <div className="relative">
+              <input
+                type="text"
+                name="width_cm"
+                value={formData.width_cm}
+                onChange={handleChange}
+                className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-md"
+                placeholder="Largeur"
+              />
+              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
+                cm
+              </span>
+            </div>
+            <div className="relative">
+              <input
+                type="text"
+                name="height_cm"
+                value={formData.height_cm}
+                onChange={handleChange}
+                className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-md"
+                placeholder="Hauteur"
+              />
+              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
+                cm
+              </span>
+            </div>
+            <div className="relative">
+              <input
+                type="text"
+                name="depth_cm"
+                value={formData.depth_cm}
+                onChange={handleChange}
+                className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-md"
+                placeholder="Profondeur"
+              />
+              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
+                cm
+              </span>
+            </div>
+          </div>
         </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Stock global
+            </label>
+            <input
+              type="text"
+              name="stock"
+              value={formData.stock}
+              onChange={handleChange}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              required
+              min="0"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Alerte stock
+            </label>
+            <input
+              type="text"
+              name="stock_alert"
+              value={formData.stock_alert}
+              onChange={handleChange}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              min="0"
+            />
+          </div>
+        </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Alerte stock
+            Description
           </label>
-          <input
-            type="text"
-            name="stock_alert"
-            value={formData.stock_alert}
+          <textarea
+            name="description"
+            value={formData.description}
             onChange={handleChange}
             className="w-full px-3 py-2 border border-gray-300 rounded-md"
-            min="0"
+            rows={3}
           />
         </div>
-      </div>
 
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Description
-        </label>
-        <textarea
-          name="description"
-          value={formData.description}
-          onChange={handleChange}
-          className="w-full px-3 py-2 border border-gray-300 rounded-md"
-          rows={3}
-        />
-      </div>
+        <div>
+          <button
+            type="button"
+            onClick={() => setIsImageManagerOpen(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50"
+          >
+            <ImageIcon size={20} />
+            Gestion des images ({productImages.length})
+          </button>
+        </div>
 
-      <div>
-        <button
-          type="button"
-          onClick={() => setIsImageManagerOpen(true)}
-          className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50"
-        >
-          <ImageIcon size={20} />
-          Gestion des images ({productImages.length})
-        </button>
-      </div>
-
-      <div>
-        <button
-          type="submit"
-          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
-        >
-          {initialProduct ? 'Mettre à jour' : 'Ajouter le produit'}
-        </button>
-      </div>
+        <div>
+          <button
+            type="submit"
+            className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+          >
+            {initialProduct ? 'Mettre à jour' : 'Ajouter le produit'}
+          </button>
+        </div>
+      </form>
 
       <ImageManager
         isOpen={isImageManagerOpen}
@@ -730,6 +839,6 @@ export const ProductForm: React.FC<ProductFormProps> = ({
         productName={newProductName}
         globalStock={globalStock}
       />
-    </form>
+    </div>
   );
 };
