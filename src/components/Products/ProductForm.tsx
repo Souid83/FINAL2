@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useProductStore } from '../../store/productStore';
 import { useCategoryStore } from '../../store/categoryStore';
 import { ImageManager } from './ImageManager';
-import { Image as ImageIcon, Download, Upload, Plus } from 'lucide-react';
+import { Image as ImageIcon } from 'lucide-react';
+import { StockAllocationModal } from './StockAllocationModal';
 
 const TVA_RATE = 0.20;
 
@@ -17,11 +18,11 @@ interface ProductFormProps {
     id: string;
     name: string;
     sku: string;
-    purchase_price: number;
+    purchase_price_with_fees: number;
     retail_price: number;
     pro_price: number;
     weight_grams: number;
-    localisation?: string;
+    location?: string;
     ean: string | null;
     stock: number;
     stock_alert: number | null;
@@ -30,11 +31,11 @@ interface ProductFormProps {
     height_cm?: number | null;
     depth_cm?: number | null;
     images?: string[];
-    variants?: {
-      color: string;
-      grade: string;
-      capacity: string;
-    }[];
+    category?: {
+      type: string;
+      brand: string;
+      model: string;
+    } | null;
   };
   onSubmitSuccess?: () => void;
   showImageManager?: boolean;
@@ -45,16 +46,16 @@ export const ProductForm: React.FC<ProductFormProps> = ({
   onSubmitSuccess,
   showImageManager = false
 }) => {
-  const { addProduct, updateProduct, addProducts } = useProductStore();
+  const { addProduct, updateProduct } = useProductStore();
   const { categories, fetchCategories, addCategory } = useCategoryStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [formData, setFormData] = useState({
     name: initialProduct?.name || '',
     sku: initialProduct?.sku || '',
-    purchase_price: initialProduct?.purchase_price?.toString() || '',
+    purchase_price_with_fees: initialProduct?.purchase_price_with_fees?.toString() || '',
     weight_grams: initialProduct?.weight_grams?.toString() || '',
-    localisation: initialProduct?.localisation || '',
+    location: initialProduct?.location || '',
     ean: initialProduct?.ean || '',
     stock: initialProduct?.stock?.toString() || '',
     stock_alert: initialProduct?.stock_alert?.toString() || '',
@@ -64,19 +65,11 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     depth_cm: initialProduct?.depth_cm?.toString() || ''
   });
 
-  // Extract category from product name if it exists
-  const getInitialCategory = () => {
-    if (!initialProduct?.name) return { type: '', brand: '', model: '' };
-    const parts = initialProduct.name.split(' ');
-    if (parts.length < 3) return { type: '', brand: '', model: '' };
-    return {
-      type: parts[0],
-      brand: parts[1],
-      model: parts.slice(2).join(' ')
-    };
-  };
-
-  const [selectedCategory, setSelectedCategory] = useState(getInitialCategory());
+  const [selectedCategory, setSelectedCategory] = useState({
+    type: initialProduct?.category?.type || '',
+    brand: initialProduct?.category?.brand || '',
+    model: initialProduct?.category?.model || ''
+  });
 
   const [retailPrice, setRetailPrice] = useState<PriceInputs>({
     ht: initialProduct?.retail_price?.toString() || '',
@@ -92,20 +85,11 @@ export const ProductForm: React.FC<ProductFormProps> = ({
 
   const [isImageManagerOpen, setIsImageManagerOpen] = useState(showImageManager);
   const [productImages, setProductImages] = useState<string[]>(initialProduct?.images || []);
-
-  // Get unique values for dropdowns
-  const uniqueTypes = Array.from(new Set(categories.map(c => c.type))).sort();
-  const uniqueBrands = Array.from(new Set(categories
-    .filter(c => !selectedCategory.type || c.type === selectedCategory.type)
-    .map(c => c.brand)
-  )).sort();
-  const uniqueModels = Array.from(new Set(categories
-    .filter(c => 
-      (!selectedCategory.type || c.type === selectedCategory.type) && 
-      (!selectedCategory.brand || c.brand === selectedCategory.brand)
-    )
-    .map(c => c.model)
-  )).sort();
+  const [isStockModalOpen, setIsStockModalOpen] = useState(false);
+  const [newProductId, setNewProductId] = useState<string | null>(null);
+  const [newProductName, setNewProductName] = useState('');
+  const [globalStock, setGlobalStock] = useState(0);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchCategories();
@@ -116,7 +100,7 @@ export const ProductForm: React.FC<ProductFormProps> = ({
   }, [showImageManager]);
 
   useEffect(() => {
-    const purchasePrice = parseFloat(formData.purchase_price);
+    const purchasePrice = parseFloat(formData.purchase_price_with_fees);
     if (!isNaN(purchasePrice) && purchasePrice > 0) {
       if (retailPrice.ht) {
         const retailHT = parseFloat(retailPrice.ht);
@@ -140,7 +124,20 @@ export const ProductForm: React.FC<ProductFormProps> = ({
         }
       }
     }
-  }, [formData.purchase_price]);
+  }, [formData.purchase_price_with_fees]);
+
+  const uniqueTypes = Array.from(new Set(categories.map(c => c.type))).sort();
+  const uniqueBrands = Array.from(new Set(categories
+    .filter(c => !selectedCategory.type || c.type === selectedCategory.type)
+    .map(c => c.brand)
+  )).sort();
+  const uniqueModels = Array.from(new Set(categories
+    .filter(c => 
+      (!selectedCategory.type || c.type === selectedCategory.type) && 
+      (!selectedCategory.brand || c.brand === selectedCategory.brand)
+    )
+    .map(c => c.model)
+  )).sort();
 
   const calculateHT = (ttc: number): number => {
     return ttc / (1 + TVA_RATE);
@@ -158,6 +155,38 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     return ((sellingPrice - purchasePrice) / purchasePrice) * 100;
   };
 
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+
+    // Allow all characters for description
+    if (name === 'description') {
+      setFormData(prev => ({ ...prev, [name]: value }));
+      return;
+    }
+
+    // For numeric fields, only allow numbers
+    const numericFields = [
+      'ean',
+      'weight_grams',
+      'stock',
+      'stock_alert',
+      'width_cm',
+      'height_cm',
+      'depth_cm',
+      'purchase_price_with_fees'
+    ];
+
+    if (numericFields.includes(name)) {
+      if (/^\d*$/.test(value)) { // Only allow numbers
+        setFormData(prev => ({ ...prev, [name]: value }));
+      }
+      return;
+    }
+
+    // For all other fields
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
   const handleCategoryChange = (field: keyof typeof selectedCategory, value: string) => {
     const upperValue = value.toUpperCase();
     setSelectedCategory(prev => {
@@ -170,14 +199,20 @@ export const ProductForm: React.FC<ProductFormProps> = ({
       }
       return newData;
     });
-  };
+};
+
 
   const updatePriceInputs = (
     type: 'retail' | 'pro',
-    field: 'ht' | 'margin' | 'ttc',
+    field: 'price' | 'margin_percent' | 'margin_amount',
     value: string
   ) => {
-    const purchasePrice = parseFloat(formData.purchase_price);
+    if (!/^\d*$/.test(value)) return; // Only allow numbers
+
+    const purchasePrice = parseFloat(formData.purchase_price_with_fees);
+    if (isNaN(purchasePrice) || purchasePrice <= 0) return;
+
+    const numValue = parseFloat(value);
     const setPrices = type === 'retail' ? setRetailPrice : setProPrice;
 
     if (!value) {
@@ -185,18 +220,17 @@ export const ProductForm: React.FC<ProductFormProps> = ({
       return;
     }
 
-    const numValue = parseFloat(value);
-    if (isNaN(numValue) || isNaN(purchasePrice)) return;
+    if (isNaN(numValue)) return;
 
     switch (field) {
-      case 'ht':
+      case 'price':
         setPrices({
           ht: value,
           margin: calculateMargin(purchasePrice, numValue).toFixed(2),
           ttc: calculateTTC(numValue).toFixed(2)
         });
         break;
-      case 'margin':
+      case 'margin_percent':
         const priceHT = calculatePriceFromMargin(purchasePrice, numValue);
         setPrices({
           ht: priceHT.toFixed(2),
@@ -204,7 +238,7 @@ export const ProductForm: React.FC<ProductFormProps> = ({
           ttc: calculateTTC(priceHT).toFixed(2)
         });
         break;
-      case 'ttc':
+      case 'margin_amount':
         const ht = calculateHT(numValue);
         setPrices({
           ht: ht.toFixed(2),
@@ -215,165 +249,87 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const text = await file.text();
-      const rows = text.split('\n').slice(1); // Skip header row
-      const products = [];
-
-      for (const row of rows.filter(row => row.trim())) {
-        const [
-          type,
-          brand,
-          model,
-          name,
-          sku,
-          purchase_price,
-          retail_price,
-          pro_price,
-          weight_grams,
-          localisation,
-          ean,
-          stock,
-          stock_alert,
-          description,
-          width_cm,
-          height_cm,
-          depth_cm
-        ] = row.split(',').map(field => field.trim());
-
-        // Create category if it doesn't exist
-        const categoryData = {
-          type: type.toUpperCase(),
-          brand: brand.toUpperCase(),
-          model: model.toUpperCase()
-        };
-
-        try {
-          await addCategory(categoryData);
-        } catch (error) {
-          console.log('Category might already exist:', error);
-        }
-
-        products.push({
-          name,
-          sku,
-          purchase_price: parseFloat(purchase_price),
-          retail_price: parseFloat(retail_price),
-          pro_price: parseFloat(pro_price),
-          weight_grams: parseInt(weight_grams),
-          location: localisation ? localisation.toUpperCase() : null,
-          ean: ean || null,
-          stock: parseInt(stock),
-          stock_alert: stock_alert ? parseInt(stock_alert) : null,
-          description: description || null,
-          width_cm: width_cm ? parseFloat(width_cm) : null,
-          height_cm: height_cm ? parseFloat(height_cm) : null,
-          depth_cm: depth_cm ? parseFloat(depth_cm) : null,
-          images: []
-        });
-      }
-
-      await addProducts(products);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    } catch (error) {
-      console.error('Error processing CSV:', error);
-    }
-  };
-
-  const downloadSampleCSV = () => {
-    const headers = [
-      'type',
-      'brand',
-      'model',
-      'name',
-      'sku',
-      'purchase_price',
-      'retail_price',
-      'pro_price',
-      'weight_grams',
-      'localisation',
-      'ean',
-      'stock',
-      'stock_alert',
-      'description',
-      'width_cm',
-      'height_cm',
-      'depth_cm'
-    ].join(',');
-
-    const sampleData = [
-      'SMARTPHONE,APPLE,IPHONE 14,iPhone 14 Pro 128Go Noir,IP14P-128-BLK,899.99,1159.99,1059.99,240,A1-B2,123456789012,5,2,"iPhone 14 Pro 128Go coloris noir",7.85,16.07,0.78',
-      'SMARTPHONE,SAMSUNG,GALAXY S23,Samsung Galaxy S23 256Go Vert,SGS23-256-GRN,849.99,1099.99,999.99,234,C3-D4,123456789013,3,1,"Samsung Galaxy S23 256Go coloris vert",7.6,15.8,0.8'
-    ].join('\n');
-
-    const csvContent = `${headers}\n${sampleData}`;
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'products_sample.csv';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+
+    // Validate category selection
+    if (!selectedCategory.type || !selectedCategory.brand || !selectedCategory.model) {
+      setError('Veuillez sélectionner une catégorie complète (Nature, Marque et Modèle)');
+      return;
+    }
+
+    // Validate numeric fields
+    const numericFields = [
+      { name: 'ean', label: 'Code EAN' },
+      { name: 'weight_grams', label: 'Poids' },
+      { name: 'stock', label: 'Stock' },
+      { name: 'purchase_price_with_fees', label: "Prix d'achat" }
+    ];
+
+    for (const field of numericFields) {
+      const value = formData[field.name as keyof typeof formData];
+      if (!value || !/^\d+$/.test(value)) {
+        setError(`Le champ ${field.label} est requis et doit contenir uniquement des chiffres.`);
+        return;
+      }
+    }
+
     try {
-      // Create category if it doesn't exist
-      if (selectedCategory.type && selectedCategory.brand && selectedCategory.model) {
-        try {
-          await addCategory({
-            type: selectedCategory.type,
-            brand: selectedCategory.brand,
-            model: selectedCategory.model
-          });
-        } catch (error) {
-          console.log('Category might already exist:', error);
-        }
+      let categoryId = null;
+      
+      // Category is now guaranteed to be complete
+      const category = await addCategory({
+        type: selectedCategory.type,
+        brand: selectedCategory.brand,
+        model: selectedCategory.model
+      });
+      
+      if (category) {
+        categoryId = category.id;
       }
 
       const productData = {
         name: formData.name,
         sku: formData.sku,
-        purchase_price: parseFloat(formData.purchase_price),
-        retail_price: parseFloat(retailPrice.ht),
-        pro_price: parseFloat(proPrice.ht),
+        purchase_price_with_fees: parseFloat(formData.purchase_price_with_fees),
+        retail_price: parseFloat(retailPrice.ht || '0'),
+        pro_price: parseFloat(proPrice.ht || '0'),
         weight_grams: parseInt(formData.weight_grams),
-        location: formData.localisation.toUpperCase(),
+        location: formData.location.toUpperCase(),
         ean: formData.ean,
         stock: parseInt(formData.stock),
         stock_alert: formData.stock_alert ? parseInt(formData.stock_alert) : null,
-        description: formData.description,
+        description: formData.description || null,
         width_cm: formData.width_cm ? parseFloat(formData.width_cm) : null,
         height_cm: formData.height_cm ? parseFloat(formData.height_cm) : null,
         depth_cm: formData.depth_cm ? parseFloat(formData.depth_cm) : null,
         images: productImages,
-        variants: initialProduct?.variants || null
+        category_id: categoryId
       };
 
       if (initialProduct) {
         await updateProduct(initialProduct.id, productData);
+        if (onSubmitSuccess) {
+          onSubmitSuccess();
+        }
       } else {
-        await addProduct(productData);
-      }
-
-      if (onSubmitSuccess) {
-        onSubmitSuccess();
+        const result = await addProduct(productData);
+        if (result?.id) {
+          setNewProductId(result.id);
+          setNewProductName(result.name);
+          setGlobalStock(parseInt(formData.stock));
+          setIsStockModalOpen(true);
+        }
       }
 
       if (!initialProduct) {
         setFormData({
           name: '',
           sku: '',
-          purchase_price: '',
+          purchase_price_with_fees: '',
           weight_grams: '',
-          localisation: '',
+          location: '',
           ean: '',
           stock: '',
           stock_alert: '',
@@ -382,64 +338,43 @@ export const ProductForm: React.FC<ProductFormProps> = ({
           height_cm: '',
           depth_cm: ''
         });
+        setSelectedCategory({ type: '', brand: '', model: '' });
         setRetailPrice({ ht: '', margin: '', ttc: '' });
         setProPrice({ ht: '', margin: '', ttc: '' });
         setProductImages([]);
-        setSelectedCategory({ type: '', brand: '', model: '' });
       }
     } catch (error) {
       console.error('Failed to save product:', error);
+      setError('Une erreur est survenue lors de l\'enregistrement du produit.');
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-  };
-
   return (
-    <form onSubmit={handleSubmit} className="bg-white p-6 rounded-lg shadow space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-6 bg-white rounded-lg shadow p-6">
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-semibold">
           {initialProduct ? 'Modifier le produit' : 'Ajouter un produit'}
         </h2>
-        <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={downloadSampleCSV}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-          >
-            <Download size={18} />
-            Télécharger exemple CSV
-          </button>
-          <label className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 cursor-pointer">
-            <Upload size={18} />
-            Importer CSV
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileUpload}
-              accept=".csv"
-              className="hidden"
-            />
-          </label>
-        </div>
       </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+          {error}
+        </div>
+      )}
 
       <div className="bg-gray-50 p-4 rounded-lg">
         <h3 className="text-lg font-medium text-gray-900 mb-4">Catégorie du produit</h3>
         <div className="grid grid-cols-3 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Nature du produit
+              Nature du produit <span className="text-red-500">*</span>
             </label>
             <select
               value={selectedCategory.type}
               onChange={(e) => handleCategoryChange('type', e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white"
+              required
             >
               <option value="">Sélectionner la nature</option>
               {uniqueTypes.map(type => (
@@ -449,13 +384,14 @@ export const ProductForm: React.FC<ProductFormProps> = ({
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Marque
+              Marque <span className="text-red-500">*</span>
             </label>
             <select
               value={selectedCategory.brand}
               onChange={(e) => handleCategoryChange('brand', e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white"
               disabled={!selectedCategory.type}
+              required
             >
               <option value="">Sélectionner la marque</option>
               {uniqueBrands.map(brand => (
@@ -465,13 +401,14 @@ export const ProductForm: React.FC<ProductFormProps> = ({
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Modèle
+              Modèle <span className="text-red-500">*</span>
             </label>
             <select
               value={selectedCategory.model}
               onChange={(e) => handleCategoryChange('model', e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white"
               disabled={!selectedCategory.brand}
+              required
             >
               <option value="">Sélectionner le modèle</option>
               {uniqueModels.map(model => (
@@ -517,11 +454,11 @@ export const ProductForm: React.FC<ProductFormProps> = ({
           </label>
           <input
             type="text"
-            name="localisation"
-            value={formData.localisation}
+            name="location"
+            value={formData.location}
             onChange={(e) => setFormData(prev => ({ 
               ...prev, 
-              localisation: e.target.value.toUpperCase() 
+              location: e.target.value.toUpperCase() 
             }))}
             className="w-full px-3 py-2 border border-gray-300 rounded-md"
             placeholder="EMPLACEMENT"
@@ -538,6 +475,7 @@ export const ProductForm: React.FC<ProductFormProps> = ({
             onChange={handleChange}
             className="w-full px-3 py-2 border border-gray-300 rounded-md"
             placeholder="Code EAN"
+            required
           />
         </div>
         <div>
@@ -545,7 +483,7 @@ export const ProductForm: React.FC<ProductFormProps> = ({
             Poids (grammes)
           </label>
           <input
-            type="number"
+            type="text"
             name="weight_grams"
             value={formData.weight_grams}
             onChange={handleChange}
@@ -560,11 +498,10 @@ export const ProductForm: React.FC<ProductFormProps> = ({
           </label>
           <div className="relative">
             <input
-              type="number"
-              name="purchase_price"
-              value={formData.purchase_price}
+              type="text"
+              name="purchase_price_with_fees"
+              value={formData.purchase_price_with_fees}
               onChange={handleChange}
-              step="0.01"
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
               required
               placeholder="Prix d'achat"
@@ -574,176 +511,170 @@ export const ProductForm: React.FC<ProductFormProps> = ({
             </span>
           </div>
         </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Prix de vente magasin
-          </label>
-          <div className="grid grid-cols-3 gap-2">
-            <div className="relative">
-              <input
-                type="number"
-                value={retailPrice.ht}
-                onChange={(e) => updatePriceInputs('retail', 'ht', e.target.value)}
-                step="0.01"
-                className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md"
-                placeholder="Prix"
-              />
-              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-                HT
-              </span>
-            </div>
-            <div className="relative">
-              <input
-                type="number"
-                value={retailPrice.margin}
-                onChange={(e) => updatePriceInputs('retail', 'margin', e.target.value)}
-                step="0.01"
-                className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md text-green-600"
-                placeholder="Marge"
-              />
-              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-green-600">
-                %
-              </span>
-            </div>
-            <div className="relative">
-              <input
-                type="number"
-                value={retailPrice.ttc}
-                onChange={(e) => updatePriceInputs('retail', 'ttc', e.target.value)}
-                step="0.01"
-                className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-md"
-                placeholder="Prix"
-              />
-              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-                TTC
-              </span>
-            </div>
-          </div>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Prix de vente pro
-          </label>
-          <div className="grid grid-cols-3 gap-2">
-            <div className="relative">
-              <input
-                type="number"
-                value={proPrice.ht}
-                onChange={(e) => updatePriceInputs('pro', 'ht', e.target.value)}
-                step="0.01"
-                className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md"
-                placeholder="Prix"
-              />
-              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-                HT
-              </span>
-            </div>
-            <div className="relative">
-              <input
-                type="number"
-                value={proPrice.margin}
-                onChange={(e) => updatePriceInputs('pro', 'margin', e.target.value)}
-                step="0.01"
-                className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md text-green-600"
-                placeholder="Marge"
-              />
-              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-green-600">
-                %
-              </span>
-            </div>
-            <div className="relative">
-              <input
-                type="number"
-                value={proPrice.ttc}
-                onChange={(e) => updatePriceInputs('pro', 'ttc', e.target.value)}
-                step="0.01"
-                className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-md"
-                placeholder="Prix"
-              />
-              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-                TTC
-              </span>
-            </div>
-          </div>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Dimensions du produit
-          </label>
-          <div className="grid grid-cols-3 gap-2">
-            <div className="relative">
-              <input
-                type="number"
-                name="width_cm"
-                value={formData.width_cm}
-                onChange={handleChange}
-                step="0.1"
-                className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-md"
-                placeholder="Largeur"
-              />
-              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-                cm
-              </span>
-            </div>
-            <div className="relative">
-              <input
-                type="number"
-                name="height_cm"
-                value={formData.height_cm}
-                onChange={handleChange}
-                step="0.1"
-                className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-md"
-                placeholder="Hauteur"
-              />
-              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-                cm
-              </span>
-            </div>
-            <div className="relative">
-              <input
-                type="number"
-                name="depth_cm"
-                value={formData.depth_cm}
-                onChange={handleChange}
-                step="0.1"
-                className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-md"
-                placeholder="Profondeur"
-              />
-              <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-                cm
-              </span>
-            </div>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Stock actuel
-            </label>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Prix de vente magasin
+        </label>
+        <div className="grid grid-cols-3 gap-4">
+          <div className="relative">
             <input
-              type="number"
-              name="stock"
-              value={formData.stock}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md"
-              required
-              placeholder="Quantité en stock"
+              type="text"
+              value={retailPrice.ht}
+              onChange={(e) => updatePriceInputs('retail', 'price', e.target.value)}
+              className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md"
+              placeholder="Prix HT"
             />
+            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
+              HT
+            </span>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Alerte stock
-            </label>
+          <div className="relative">
             <input
-              type="number"
-              name="stock_alert"
-              value={formData.stock_alert}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md"
-              placeholder="Seuil d'alerte"
-              min="0"
+              type="text"
+              value={retailPrice.margin}
+              onChange={(e) => updatePriceInputs('retail', 'margin_percent', e.target.value)}
+              className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md text-green-600"
+              placeholder="Marge"
             />
+            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-green-600">
+              %
+            </span>
           </div>
+          <div className="relative">
+            <input
+              type="text"
+              value={retailPrice.ttc}
+              onChange={(e) => updatePriceInputs('retail', 'margin_amount', e.target.value)}
+              className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-md"
+              placeholder="Prix TTC"
+            />
+            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
+              TTC
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Prix de vente pro
+        </label>
+        <div className="grid grid-cols-3 gap-4">
+          <div className="relative">
+            <input
+              type="text"
+              value={proPrice.ht}
+              onChange={(e) => updatePriceInputs('pro', 'price', e.target.value)}
+              className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md"
+              placeholder="Prix HT"
+            />
+            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
+              HT
+            </span>
+          </div>
+          <div className="relative">
+            <input
+              type="text"
+              value={proPrice.margin}
+              onChange={(e) => updatePriceInputs('pro', 'margin_percent', e.target.value)}
+              className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md text-green-600"
+              placeholder="Marge"
+            />
+            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-green-600">
+              %
+            </span>
+          </div>
+          <div className="relative">
+            <input
+              type="text"
+              value={proPrice.ttc}
+              onChange={(e) => updatePriceInputs('pro', 'margin_amount', e.target.value)}
+              className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-md"
+              placeholder="Prix TTC"
+            />
+            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
+              TTC
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Dimensions du produit
+        </label>
+        <div className="grid grid-cols-3 gap-4">
+          <div className="relative">
+            <input
+              type="text"
+              name="width_cm"
+              value={formData.width_cm}
+              onChange={handleChange}
+              className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-md"
+              placeholder="Largeur"
+            />
+            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
+              cm
+            </span>
+          </div>
+          <div className="relative">
+            <input
+              type="text"
+              name="height_cm"
+              value={formData.height_cm}
+              onChange={handleChange}
+              className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-md"
+              placeholder="Hauteur"
+            />
+            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
+              cm
+            </span>
+          </div>
+          <div className="relative">
+            <input
+              type="text"
+              name="depth_cm"
+              value={formData.depth_cm}
+              onChange={handleChange}
+              className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-md"
+              placeholder="Profondeur"
+            />
+            <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
+              cm
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Stock global
+          </label>
+          <input
+            type="text"
+            name="stock"
+            value={formData.stock}
+            onChange={handleChange}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md"
+            required
+            min="0"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Alerte stock
+          </label>
+          <input
+            type="text"
+            name="stock_alert"
+            value={formData.stock_alert}
+            onChange={handleChange}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md"
+            min="0"
+          />
         </div>
       </div>
 
@@ -757,28 +688,8 @@ export const ProductForm: React.FC<ProductFormProps> = ({
           onChange={handleChange}
           className="w-full px-3 py-2 border border-gray-300 rounded-md"
           rows={3}
-          placeholder="Description du produit"
         />
       </div>
-
-      {/* Display variants if they exist */}
-      {initialProduct?.variants && initialProduct.variants.length > 0 && (
-        <div className="bg-gray-50 p-4 rounded-lg">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Variantes du produit</h3>
-          <div className="grid grid-cols-3 gap-4">
-            <div className="font-medium text-gray-700">Couleur</div>
-            <div className="font-medium text-gray-700">Grade</div>
-            <div className="font-medium text-gray-700">Capacité</div>
-            {initialProduct.variants.map((variant, index) => (
-              <React.Fragment key={index}>
-                <div className="text-gray-900">{variant.color}</div>
-                <div className="text-gray-900">{variant.grade}</div>
-                <div className="text-gray-900">{variant.capacity}</div>
-              </React.Fragment>
-            ))}
-          </div>
-        </div>
-      )}
 
       <div>
         <button
@@ -805,6 +716,19 @@ export const ProductForm: React.FC<ProductFormProps> = ({
         onClose={() => setIsImageManagerOpen(false)}
         onImagesChange={setProductImages}
         currentImages={productImages}
+      />
+
+      <StockAllocationModal
+        isOpen={isStockModalOpen}
+        onClose={() => {
+          setIsStockModalOpen(false);
+          if (onSubmitSuccess) {
+            onSubmitSuccess();
+          }
+        }}
+        productId={newProductId || ''}
+        productName={newProductName}
+        globalStock={globalStock}
       />
     </form>
   );

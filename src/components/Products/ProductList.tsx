@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useProductStore } from '../../store/productStore';
-import { Edit, Trash2, AlertCircle, Image as ImageIcon, Plus } from 'lucide-react';
+import { Edit, Trash2, AlertCircle, Image as ImageIcon, Plus, Package } from 'lucide-react';
 import { ProductForm } from './ProductForm';
+import { StockManager } from './StockManager';
+import { supabase } from '../../lib/supabase';
 import type { Database } from '../../types/supabase';
 
 type Product = Database['public']['Tables']['products']['Row'] & {
@@ -10,6 +12,15 @@ type Product = Database['public']['Tables']['products']['Row'] & {
     brand: string;
     model: string;
   } | null;
+  stocks?: {
+    id: string;
+    name: string;
+    quantite: number;
+    group?: {
+      name: string;
+      synchronizable: boolean;
+    };
+  }[];
 };
 
 interface ProductListProps {
@@ -18,17 +29,48 @@ interface ProductListProps {
 
 const TVA_RATE = 0.20;
 
-export const ProductList: React.FC<ProductListProps> = ({ products }) => {
-  const { isLoading, error, deleteProduct } = useProductStore();
+export const ProductList: React.FC<ProductListProps> = ({ products: initialProducts }) => {
+  const { isLoading, error, deleteProduct, fetchProducts } = useProductStore();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
   const [editingProduct, setEditingProduct] = useState<string | null>(null);
   const [showImageManager, setShowImageManager] = useState(false);
+  const [managingStockProduct, setManagingStockProduct] = useState<string | null>(null);
+  const [products, setProducts] = useState<Product[]>(initialProducts);
+
+  useEffect(() => {
+    setProducts(initialProducts);
+  }, [initialProducts]);
+
+  useEffect(() => {
+    const subscription = supabase
+      .channel('stock_changes')
+      .on(
+        'postgres_changes',
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'stock_produit'
+        },
+        async () => {
+          const updatedProducts = await fetchProducts();
+          if (updatedProducts) {
+            setProducts(updatedProducts);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(subscription);
+    };
+  }, [fetchProducts]);
 
   const calculateTTC = (priceHT: number) => {
     return priceHT * (1 + TVA_RATE);
   };
 
   const calculateMargin = (purchasePrice: number, sellingPrice: number) => {
+    if (!purchasePrice || !sellingPrice) return 0;
     return ((sellingPrice - purchasePrice) / purchasePrice) * 100;
   };
 
@@ -46,14 +88,11 @@ export const ProductList: React.FC<ProductListProps> = ({ products }) => {
     setShowImageManager(true);
   };
 
-  const getProductCategory = (name: string) => {
-    const parts = name.split(' ');
-    if (parts.length < 3) return { type: '', brand: '', model: '' };
-    return {
-      type: parts[0],
-      brand: parts[1],
-      model: parts.slice(2).join(' ')
-    };
+  const handleStockUpdate = async () => {
+    const updatedProducts = await fetchProducts();
+    if (updatedProducts) {
+      setProducts(updatedProducts);
+    }
   };
 
   if (isLoading) {
@@ -108,9 +147,13 @@ export const ProductList: React.FC<ProductListProps> = ({ products }) => {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {products.map((product) => {
-                const retailMargin = calculateMargin(product.purchase_price, product.retail_price);
-                const proMargin = calculateMargin(product.purchase_price, product.pro_price);
-                const isLowStock = product.stock_alert !== null && product.stock <= product.stock_alert;
+                const purchasePrice = product.purchase_price_with_fees || 0;
+                const retailPrice = product.retail_price || 0;
+                const proPrice = product.pro_price || 0;
+                const retailMargin = calculateMargin(purchasePrice, retailPrice);
+                const proMargin = calculateMargin(purchasePrice, proPrice);
+                const isLowStock = product.stock_alert !== null && product.stock_total <= product.stock_alert;
+                const totalStock = product.stocks?.reduce((sum, stock) => sum + stock.quantite, 0) || 0;
 
                 return (
                   <tr key={product.id} className={isLowStock ? 'bg-red-50' : ''}>
@@ -150,28 +193,48 @@ export const ProductList: React.FC<ProductListProps> = ({ products }) => {
                       {product.category ? `${product.category.type} ${product.category.brand} ${product.category.model}` : '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {product.purchase_price.toFixed(2)} €
+                      {purchasePrice.toFixed(2)} €
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       <div className="flex items-center space-x-2">
-                        <span>{calculateTTC(product.retail_price).toFixed(2)} €</span>
+                        <span>{calculateTTC(retailPrice).toFixed(2)} €</span>
                         <span className="text-green-600">({retailMargin.toFixed(0)}%)</span>
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       <div className="flex items-center space-x-2">
-                        <span>{calculateTTC(product.pro_price).toFixed(2)} €</span>
+                        <span>{calculateTTC(proPrice).toFixed(2)} €</span>
                         <span className="text-green-600">({proMargin.toFixed(0)}%)</span>
                       </div>
                     </td>
                     <td className={`px-6 py-4 whitespace-nowrap text-sm ${isLowStock ? 'text-red-600 font-medium' : 'text-gray-500'}`}>
-                      {product.stock}
+                      <button
+                        onClick={() => setManagingStockProduct(product.id)}
+                        className="flex items-center gap-2 hover:text-blue-600"
+                      >
+                        <Package size={16} />
+                        <span>{totalStock}</span>
+                      </button>
+                      {product.stocks && product.stocks.length > 0 && (
+                        <div className="mt-1 space-y-1">
+                          {product.stocks.map(stock => (
+                            <div key={stock.id} className="text-xs text-gray-500">
+                              {stock.name}: {stock.quantite}
+                              {stock.group && (
+                                <span className="text-gray-400 ml-1">
+                                  ({stock.group.name})
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {product.stock_alert || '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {product.storage_location}
+                      {product.location || '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       <div className="flex space-x-2">
@@ -252,6 +315,16 @@ export const ProductList: React.FC<ProductListProps> = ({ products }) => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Stock Manager Modal */}
+      {managingStockProduct && (
+        <StockManager
+          isOpen={true}
+          onClose={() => setManagingStockProduct(null)}
+          productId={managingStockProduct}
+          onStockUpdate={handleStockUpdate}
+        />
       )}
     </div>
   );

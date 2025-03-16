@@ -3,14 +3,21 @@ import { ProductList } from '../components/Products/ProductList';
 import { useProductStore } from '../store/productStore';
 import { ProductSearch } from '../components/Search/ProductSearch';
 import { Download } from 'lucide-react';
+import { CSVImport } from '../components/Products/CSVImport';
 import Fuse from 'fuse.js';
 import type { Database } from '../types/supabase';
 
-type Product = Database['public']['Tables']['products']['Row'];
+type Product = Database['public']['Tables']['products']['Row'] & {
+  category?: {
+    type: string;
+    brand: string;
+    model: string;
+  } | null;
+};
 
 export const Products: React.FC = () => {
-  const { products, fetchProducts } = useProductStore();
-  const [filteredProducts, setFilteredProducts] = useState(products);
+  const { products, fetchProducts, addProducts } = useProductStore();
+  const [filteredProducts, setFilteredProducts] = useState<Product[]>(products);
   const [currentSearchQuery, setCurrentSearchQuery] = useState('');
 
   useEffect(() => {
@@ -53,7 +60,10 @@ export const Products: React.FC = () => {
         { name: 'sku', weight: 2 },
         { name: 'ean', weight: 2 },
         { name: 'description', weight: 1 },
-        { name: 'storage_location', weight: 1 }
+        { name: 'location', weight: 1 },
+        { name: 'category.type', weight: 1.5 },
+        { name: 'category.brand', weight: 1.5 },
+        { name: 'category.model', weight: 1.5 }
       ],
       threshold: 0.4,
       distance: 200,
@@ -66,10 +76,22 @@ export const Products: React.FC = () => {
     setFilteredProducts(results.map(result => result.item));
   };
 
+  const handleImportProducts = async (products: any[]) => {
+    try {
+      await addProducts(products);
+      await fetchProducts(); // Refresh the product list
+    } catch (error) {
+      console.error('Error importing products:', error);
+    }
+  };
+
   const exportProducts = (productsToExport: Product[]) => {
     const headers = [
       'SKU',
       'Nom',
+      'Type',
+      'Marque',
+      'Modèle',
       'Prix d\'achat HT',
       'Prix magasin HT',
       'Prix pro HT',
@@ -89,12 +111,15 @@ export const Products: React.FC = () => {
       ...productsToExport.map(product => [
         product.sku,
         `"${product.name.replace(/"/g, '""')}"`,
-        product.purchase_price,
+        product.category?.type || '',
+        product.category?.brand || '',
+        product.category?.model || '',
+        product.purchase_price_with_fees,
         product.retail_price,
         product.pro_price,
         product.stock,
         product.stock_alert || '',
-        product.storage_location || '',
+        product.location || '',
         product.ean || '',
         product.weight_grams,
         product.width_cm || '',
@@ -125,13 +150,16 @@ export const Products: React.FC = () => {
     }
 
     const csvContent = [
-      ['SKU', 'Nom', 'Stock actuel', 'Seuil d\'alerte', 'Emplacement', 'EAN'].join(','),
+      ['SKU', 'Nom', 'Type', 'Marque', 'Modèle', 'Stock actuel', 'Seuil d\'alerte', 'Emplacement', 'EAN'].join(','),
       ...lowStockProducts.map(product => [
         product.sku,
         `"${product.name.replace(/"/g, '""')}"`,
+        product.category?.type || '',
+        product.category?.brand || '',
+        product.category?.model || '',
         product.stock,
         product.stock_alert,
-        product.storage_location || '',
+        product.location || '',
         product.ean || ''
       ].join(','))
     ].join('\n');
@@ -180,6 +208,8 @@ export const Products: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <CSVImport onImport={handleImportProducts} />
       <ProductList products={filteredProducts} />
     </div>
   );

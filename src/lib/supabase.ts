@@ -12,7 +12,41 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
   auth: {
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: false
+    detectSessionInUrl: false,
+    storageKey: 'supabase-auth',
+    storage: {
+      getItem: (key) => {
+        try {
+          const item = localStorage.getItem(key);
+          return item;
+        } catch {
+          return null;
+        }
+      },
+      setItem: (key, value) => {
+        try {
+          localStorage.setItem(key, value);
+        } catch {
+          // Ignore write errors
+        }
+      },
+      removeItem: (key) => {
+        try {
+          localStorage.removeItem(key);
+        } catch {
+          // Ignore remove errors
+        }
+      }
+    },
+    cookieOptions: {
+      name: 'sb-auth-token',
+      lifetime: 60 * 60 * 24 * 7, // 7 days
+      domain: window.location.hostname,
+      path: '/',
+      sameSite: 'None',
+      secure: true,
+      httpOnly: true
+    }
   }
 });
 
@@ -20,13 +54,13 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
 export const isAdmin = async (): Promise<boolean> => {
   try {
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return true; // For now, allow all users to be admin since we removed auth
+    if (!user) return true; // For now, allow all users to be admin
 
     const { data, error } = await supabase
       .from('admin_users')
       .select('is_admin')
       .eq('id', user.id)
-      .maybeSingle(); // Use maybeSingle instead of single to handle no rows gracefully
+      .maybeSingle();
 
     if (error) {
       console.error('Error checking admin status:', error);

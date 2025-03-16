@@ -6,13 +6,21 @@ import { useCategoryStore } from '../store/categoryStore';
 import { useVariantStore } from '../store/variantStore';
 import { ImageManager } from '../components/Products/ImageManager';
 
+const VAT_RATE = 0.20; // 20% VAT rate
+
 interface FormData {
   name: string;
   sku: string;
   purchase_price: string;
   purchase_price_2: string;
   retail_price: string;
+  retail_margin_percent: string;
+  retail_margin_amount: string;
+  retail_price_ttc: string;
   pro_price: string;
+  pro_margin_percent: string;
+  pro_margin_amount: string;
+  pro_price_ttc: string;
   weight_grams: string;
   localisation: string;
   ean: string;
@@ -52,14 +60,19 @@ export const ProductSerialForm: React.FC = () => {
     fetchVariants();
   }, [fetchCategories, fetchVariants]);
 
-  // Initialize formData with empty strings
   const [formData, setFormData] = useState<FormData>({
     name: '',
     sku: '',
     purchase_price: '',
     purchase_price_2: '',
     retail_price: '',
+    retail_margin_percent: '',
+    retail_margin_amount: '',
+    retail_price_ttc: '',
     pro_price: '',
+    pro_margin_percent: '',
+    pro_margin_amount: '',
+    pro_price_ttc: '',
     weight_grams: '',
     localisation: '',
     ean: '',
@@ -86,7 +99,6 @@ export const ProductSerialForm: React.FC = () => {
     }
   });
 
-  // Get unique values for dropdowns
   const uniqueTypes = Array.from(new Set(categories.map(c => c.type))).sort();
   const uniqueBrands = Array.from(new Set(categories
     .filter(c => !formData.category.type || c.type === formData.category.type)
@@ -100,14 +112,123 @@ export const ProductSerialForm: React.FC = () => {
     .map(c => c.model)
   )).sort();
 
-  // Get unique values for variant dropdowns
   const uniqueColors = Array.from(new Set(variants.map(v => v.color))).sort();
   const uniqueGrades = Array.from(new Set(variants.map(v => v.grade))).sort();
   const uniqueCapacities = Array.from(new Set(variants.map(v => v.capacity))).sort();
 
+  const calculateMargins = (
+    type: 'retail' | 'pro',
+    field: 'price' | 'margin_percent' | 'margin_amount',
+    value: string
+  ) => {
+    const purchasePrice = parseFloat(formData.purchase_price_2) || parseFloat(formData.purchase_price);
+    if (isNaN(purchasePrice) || purchasePrice <= 0) return;
+
+    const newFormData = { ...formData };
+    const numValue = parseFloat(value);
+
+    if (type === 'retail') {
+      if (field === 'price' && !isNaN(numValue)) {
+        const marginAmount = numValue - purchasePrice;
+        const marginPercent = (marginAmount / purchasePrice) * 100;
+
+        newFormData.retail_price = value;
+        newFormData.retail_margin_amount = marginAmount.toFixed(2);
+        newFormData.retail_margin_percent = marginPercent.toFixed(2);
+
+        if (formData.vat_type === 'normal') {
+          newFormData.retail_price_ttc = (numValue * (1 + VAT_RATE)).toFixed(2);
+        } else {
+          newFormData.retail_price_ttc = '';
+        }
+      } else if (field === 'margin_percent' && !isNaN(numValue)) {
+        const marginAmount = (purchasePrice * numValue) / 100;
+        const sellingPrice = purchasePrice + marginAmount;
+
+        newFormData.retail_price = sellingPrice.toFixed(2);
+        newFormData.retail_margin_amount = marginAmount.toFixed(2);
+        newFormData.retail_margin_percent = value;
+
+        if (formData.vat_type === 'normal') {
+          newFormData.retail_price_ttc = (sellingPrice * (1 + VAT_RATE)).toFixed(2);
+        } else {
+          newFormData.retail_price_ttc = '';
+        }
+      } else if (field === 'margin_amount' && !isNaN(numValue)) {
+        const sellingPrice = purchasePrice + numValue;
+        const marginPercent = (numValue / purchasePrice) * 100;
+
+        newFormData.retail_price = sellingPrice.toFixed(2);
+        newFormData.retail_margin_amount = value;
+        newFormData.retail_margin_percent = marginPercent.toFixed(2);
+
+        if (formData.vat_type === 'normal') {
+          newFormData.retail_price_ttc = (sellingPrice * (1 + VAT_RATE)).toFixed(2);
+        } else {
+          newFormData.retail_price_ttc = '';
+        }
+      }
+    } else {
+      if (field === 'price' && !isNaN(numValue)) {
+        const marginAmount = numValue - purchasePrice;
+        const marginPercent = (marginAmount / purchasePrice) * 100;
+
+        newFormData.pro_price = value;
+        newFormData.pro_margin_amount = marginAmount.toFixed(2);
+        newFormData.pro_margin_percent = marginPercent.toFixed(2);
+
+        if (formData.vat_type === 'normal') {
+          newFormData.pro_price_ttc = (numValue * (1 + VAT_RATE)).toFixed(2);
+        } else {
+          newFormData.pro_price_ttc = '';
+        }
+      } else if (field === 'margin_percent' && !isNaN(numValue)) {
+        const marginAmount = (purchasePrice * numValue) / 100;
+        const sellingPrice = purchasePrice + marginAmount;
+
+        newFormData.pro_price = sellingPrice.toFixed(2);
+        newFormData.pro_margin_amount = marginAmount.toFixed(2);
+        newFormData.pro_margin_percent = value;
+
+        if (formData.vat_type === 'normal') {
+          newFormData.pro_price_ttc = (sellingPrice * (1 + VAT_RATE)).toFixed(2);
+        } else {
+          newFormData.pro_price_ttc = '';
+        }
+      } else if (field === 'margin_amount' && !isNaN(numValue)) {
+        const sellingPrice = purchasePrice + numValue;
+        const marginPercent = (numValue / purchasePrice) * 100;
+
+        newFormData.pro_price = sellingPrice.toFixed(2);
+        newFormData.pro_margin_amount = value;
+        newFormData.pro_margin_percent = marginPercent.toFixed(2);
+
+        if (formData.vat_type === 'normal') {
+          newFormData.pro_price_ttc = (sellingPrice * (1 + VAT_RATE)).toFixed(2);
+        } else {
+          newFormData.pro_price_ttc = '';
+        }
+      }
+    }
+
+    setFormData(newFormData);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      if (formData.category.type && formData.category.brand && formData.category.model) {
+        try {
+          await addCategory({
+            type: formData.category.type,
+            brand: formData.category.brand,
+            model: formData.category.model
+          });
+        } catch (error) {
+          console.log('Category might already exist:', error);
+        }
+      }
+
       const productData = {
         name: formData.name,
         sku: formData.sku,
@@ -143,7 +264,6 @@ export const ProductSerialForm: React.FC = () => {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     
-    // Handle nested objects (category and variant)
     if (name.includes('.')) {
       const [parent, child] = name.split('.');
       setFormData(prev => ({
@@ -153,6 +273,57 @@ export const ProductSerialForm: React.FC = () => {
           [child]: value
         }
       }));
+    } else if (name === 'vat_type') {
+      setFormData(prev => {
+        const newData = { ...prev, [name]: value };
+        if (value === 'margin') {
+          newData.retail_price_ttc = '';
+          newData.pro_price_ttc = '';
+        }
+        return newData;
+      });
+      
+      if (formData.retail_price) {
+        calculateMargins('retail', 'price', formData.retail_price);
+      }
+      if (formData.pro_price) {
+        calculateMargins('pro', 'price', formData.pro_price);
+      }
+    } else if (name === 'purchase_price' || name === 'purchase_price_2') {
+      setFormData(prev => ({ ...prev, [name]: value }));
+      
+      if (formData.retail_price) {
+        calculateMargins('retail', 'price', formData.retail_price);
+      }
+      if (formData.pro_price) {
+        calculateMargins('pro', 'price', formData.pro_price);
+      }
+    } else if (name.startsWith('retail_')) {
+      const field = name.replace('retail_', '') as 'price' | 'margin_percent' | 'margin_amount';
+      if (value === '') {
+        setFormData(prev => ({
+          ...prev,
+          retail_price: '',
+          retail_margin_percent: '',
+          retail_margin_amount: '',
+          retail_price_ttc: ''
+        }));
+      } else {
+        calculateMargins('retail', field, value);
+      }
+    } else if (name.startsWith('pro_')) {
+      const field = name.replace('pro_', '') as 'price' | 'margin_percent' | 'margin_amount';
+      if (value === '') {
+        setFormData(prev => ({
+          ...prev,
+          pro_price: '',
+          pro_margin_percent: '',
+          pro_margin_amount: '',
+          pro_price_ttc: ''
+        }));
+      } else {
+        calculateMargins('pro', field, value);
+      }
     } else {
       setFormData(prev => ({ ...prev, [name]: value }));
     }
@@ -173,7 +344,6 @@ export const ProductSerialForm: React.FC = () => {
       <form onSubmit={handleSubmit} className="space-y-6 bg-white rounded-lg shadow p-6">
         <h2 className="text-xl font-semibold">Ajouter un produit avec numéro de série</h2>
 
-        {/* TVA Selection */}
         <div className="bg-gray-50 p-4 rounded-lg">
           <h3 className="text-sm font-medium text-gray-700 mb-2">Type de TVA</h3>
           <div className="flex gap-4">
@@ -197,12 +367,11 @@ export const ProductSerialForm: React.FC = () => {
                 onChange={handleChange}
                 className="form-radio h-4 w-4 text-blue-600"
               />
-              <span className="ml-2">TVA marge</span>
+              <span className="ml-2">TVA sur marge</span>
             </label>
           </div>
         </div>
 
-        {/* Product Category */}
         <div className="bg-gray-50 p-4 rounded-lg">
           <h3 className="text-sm font-medium text-gray-700 mb-2">Catégorie du produit</h3>
           <div className="grid grid-cols-3 gap-4">
@@ -259,7 +428,6 @@ export const ProductSerialForm: React.FC = () => {
           </div>
         </div>
 
-        {/* Basic Product Information */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -271,7 +439,6 @@ export const ProductSerialForm: React.FC = () => {
               value={formData.name}
               onChange={handleChange}
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
-              required
             />
           </div>
           <div>
@@ -284,16 +451,14 @@ export const ProductSerialForm: React.FC = () => {
               value={formData.sku}
               onChange={handleChange}
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
-              required
             />
           </div>
         </div>
 
-        {/* Purchase Prices */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Prix d'achat 1
+              Prix d'achat brut
             </label>
             <input
               type="number"
@@ -301,13 +466,13 @@ export const ProductSerialForm: React.FC = () => {
               value={formData.purchase_price}
               onChange={handleChange}
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
-              required
               step="0.01"
+              min="0"
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Prix d'achat 2
+              Prix d'achat avec frais
             </label>
             <input
               type="number"
@@ -316,79 +481,118 @@ export const ProductSerialForm: React.FC = () => {
               onChange={handleChange}
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
               step="0.01"
+              min={formData.purchase_price || 0}
+              placeholder="Prix avec frais engagés"
             />
           </div>
         </div>
 
-        {/* Retail Prices */}
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Prix de vente magasin
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="relative">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Prix de vente magasin
+          </label>
+          <div className={`grid ${formData.vat_type === 'normal' ? 'grid-cols-4' : 'grid-cols-3'} gap-4`}>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Prix de vente HT</label>
+              <input
+                type="number"
+                name="retail_price"
+                value={formData.retail_price}
+                onChange={handleChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                step="0.01"
+                min={formData.purchase_price_2 || formData.purchase_price || 0}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Marge (%)</label>
+              <input
+                type="number"
+                name="retail_margin_percent"
+                value={formData.retail_margin_percent}
+                onChange={handleChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                step="0.01"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Marge (€)</label>
+              <input
+                type="number"
+                name="retail_margin_amount"
+                value={formData.retail_margin_amount}
+                onChange={handleChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                step="0.01"
+              />
+            </div>
+            {formData.vat_type === 'normal' && (
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Prix TTC</label>
                 <input
                   type="number"
-                  name="retail_price"
-                  value={formData.retail_price}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-md"
-                  required
-                  step="0.01"
-                />
-                <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-                  HT
-                </span>
-              </div>
-              <div className="relative">
-                <input
-                  type="number"
-                  value={(parseFloat(formData.retail_price) * 1.2).toFixed(2)}
-                  className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-md bg-gray-50"
+                  value={formData.retail_price_ttc}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50"
                   readOnly
                 />
-                <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-                  TTC
-                </span>
               </div>
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Prix de vente pro
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="relative">
-                <input
-                  type="number"
-                  name="pro_price"
-                  value={formData.pro_price}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-md"
-                  required
-                  step="0.01"
-                />
-                <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-                  HT
-                </span>
-              </div>
-              <div className="relative">
-                <input
-                  type="number"
-                  value={(parseFloat(formData.pro_price) * 1.2).toFixed(2)}
-                  className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-md bg-gray-50"
-                  readOnly
-                />
-                <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-                  TTC
-                </span>
-              </div>
-            </div>
+            )}
           </div>
         </div>
 
-        {/* Product Variants */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Prix de vente pro
+          </label>
+          <div className={`grid ${formData.vat_type === 'normal' ? 'grid-cols-4' : 'grid-cols-3'} gap-4`}>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Prix de vente HT</label>
+              <input
+                type="number"
+                name="pro_price"
+                value={formData.pro_price}
+                onChange={handleChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                step="0.01"
+                min={formData.purchase_price_2 || formData.purchase_price || 0}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Marge (%)</label>
+              <input
+                type="number"
+                name="pro_margin_percent"
+                value={formData.pro_margin_percent}
+                onChange={handleChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                step="0.01"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Marge (€)</label>
+              <input
+                type="number"
+                name="pro_margin_amount"
+                value={formData.pro_margin_amount}
+                onChange={handleChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                step="0.01"
+              />
+            </div>
+            {formData.vat_type === 'normal' && (
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Prix TTC</label>
+                <input
+                  type="number"
+                  value={formData.pro_price_ttc}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50"
+                  readOnly
+                />
+              </div>
+            )}
+          </div>
+        </div>
+
         <div className="bg-gray-50 p-4 rounded-lg">
           <h3 className="text-sm font-medium text-gray-700 mb-2">Variantes du produit</h3>
           <div className="grid grid-cols-3 gap-4">
@@ -443,7 +647,6 @@ export const ProductSerialForm: React.FC = () => {
           </div>
         </div>
 
-        {/* Additional Fields */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -514,7 +717,6 @@ export const ProductSerialForm: React.FC = () => {
               value={formData.weight_grams}
               onChange={handleChange}
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
-              required
             />
           </div>
           <div>
@@ -578,6 +780,7 @@ export const ProductSerialForm: React.FC = () => {
                 cm
               </span>
             </div>
+          
           </div>
         </div>
 
@@ -592,7 +795,6 @@ export const ProductSerialForm: React.FC = () => {
               value={formData.stock}
               onChange={handleChange}
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
-              required
             />
           </div>
           <div>

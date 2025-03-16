@@ -2,15 +2,31 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../types/supabase';
 
-type Product = Database['public']['Tables']['products']['Row'];
+type Product = Database['public']['Tables']['products']['Row'] & {
+  category?: {
+    type: string;
+    brand: string;
+    model: string;
+  } | null;
+  stocks?: {
+    id: string;
+    name: string;
+    quantite: number;
+    group?: {
+      name: string;
+      synchronizable: boolean;
+    };
+  }[];
+};
+
 type ProductInsert = Database['public']['Tables']['products']['Insert'];
 
 interface ProductStore {
   products: Product[];
   isLoading: boolean;
   error: string | null;
-  fetchProducts: () => Promise<void>;
-  addProduct: (product: ProductInsert) => Promise<void>;
+  fetchProducts: () => Promise<Product[] | null>;
+  addProduct: (product: ProductInsert) => Promise<Product | null>;
   addProducts: (products: ProductInsert[]) => Promise<void>;
   updateProduct: (id: string, updates: Partial<Product>) => Promise<void>;
   deleteProduct: (id: string) => Promise<void>;
@@ -28,22 +44,48 @@ export const useProductStore = create<ProductStore>((set, get) => ({
         .from('products')
         .select(`
           *,
-          category:product_categories(*)
+          category:product_categories(
+            type,
+            brand,
+            model
+          ),
+          stocks:stock_produit(
+            id,
+            quantite,
+            stock:stocks(
+              id,
+              name,
+              group:stock_groups(
+                name,
+                synchronizable
+              )
+            )
+          )
         `)
         .order('created_at', { ascending: false });
 
-      if (error) {
-        console.error('Error fetching products:', error);
-        throw error;
-      }
+      if (error) throw error;
 
-      set({ products: data || [], isLoading: false });
+      // Transform the data to match our Product type
+      const transformedData = data?.map(product => ({
+        ...product,
+        stocks: product.stocks?.map(stock => ({
+          id: stock.stock.id,
+          name: stock.stock.name,
+          quantite: stock.quantite,
+          group: stock.stock.group
+        }))
+      })) || [];
+
+      set({ products: transformedData, isLoading: false });
+      return transformedData;
     } catch (error) {
       console.error('Error in fetchProducts:', error);
       set({ 
         error: error instanceof Error ? error.message : 'An error occurred while fetching products',
         isLoading: false 
       });
+      return null;
     }
   },
 
@@ -55,39 +97,48 @@ export const useProductStore = create<ProductStore>((set, get) => ({
         .insert([product])
         .select(`
           *,
-          category:product_categories(*)
+          category:product_categories(
+            type,
+            brand,
+            model
+          )
         `)
         .single();
 
-      if (error) {
-        console.error('Error adding product:', error);
-        throw error;
-      }
+      if (error) throw error;
 
       const products = get().products;
       set({ products: [data, ...products], isLoading: false });
+      return data;
     } catch (error) {
       console.error('Error in addProduct:', error);
       set({ 
         error: error instanceof Error ? error.message : 'An error occurred while adding the product',
         isLoading: false 
       });
+      return null;
     }
   },
 
   addProducts: async (products: ProductInsert[]) => {
     set({ isLoading: true, error: null });
     try {
-      const { error } = await supabase
-        .from('products')
-        .insert(products);
+      for (const product of products) {
+        try {
+          const { error } = await supabase
+            .from('products')
+            .insert([product]);
 
-      if (error) {
-        console.error('Error adding products:', error);
-        throw error;
+          if (error) {
+            console.warn(`Failed to add product with SKU "${product.sku}":`, error);
+          }
+        } catch (error) {
+          console.warn(`Error adding product with SKU "${product.sku}":`, error);
+        }
       }
 
       await get().fetchProducts();
+      set({ isLoading: false });
     } catch (error) {
       console.error('Error in addProducts:', error);
       set({ 
@@ -106,14 +157,15 @@ export const useProductStore = create<ProductStore>((set, get) => ({
         .eq('id', id)
         .select(`
           *,
-          category:product_categories(*)
+          category:product_categories(
+            type,
+            brand,
+            model
+          )
         `)
         .single();
 
-      if (error) {
-        console.error('Error updating product:', error);
-        throw error;
-      }
+      if (error) throw error;
 
       const products = get().products.map(product => 
         product.id === id ? { ...product, ...data } : product
@@ -136,10 +188,7 @@ export const useProductStore = create<ProductStore>((set, get) => ({
         .delete()
         .eq('id', id);
 
-      if (error) {
-        console.error('Error deleting product:', error);
-        throw error;
-      }
+      if (error) throw error;
       
       const products = get().products.filter(product => product.id !== id);
       set({ products, isLoading: false });

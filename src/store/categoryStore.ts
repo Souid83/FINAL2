@@ -10,7 +10,7 @@ interface CategoryStore {
   isLoading: boolean;
   error: string | null;
   fetchCategories: () => Promise<void>;
-  addCategory: (category: Omit<ProductCategoryInsert, 'id'>) => Promise<void>;
+  addCategory: (category: Omit<ProductCategoryInsert, 'id'>) => Promise<ProductCategory | null>;
   addCategories: (categories: Omit<ProductCategoryInsert, 'id'>[]) => Promise<void>;
   deleteCategory: (id: string) => Promise<void>;
   clearError: () => void;
@@ -51,16 +51,16 @@ export const useCategoryStore = create<CategoryStore>((set, get) => ({
       // First check if category already exists
       const { data: existingCategory } = await supabase
         .from('product_categories')
-        .select('id')
+        .select('*')
         .eq('type', category.type.toUpperCase())
         .eq('brand', category.brand.toUpperCase())
         .eq('model', category.model.toUpperCase())
         .maybeSingle();
 
-      // If category exists, just return without error
+      // If category exists, return it
       if (existingCategory) {
         set({ isLoading: false });
-        return;
+        return existingCategory;
       }
 
       // If category doesn't exist, create it
@@ -76,11 +76,6 @@ export const useCategoryStore = create<CategoryStore>((set, get) => ({
         .single();
 
       if (error) {
-        if (error.code === '23505') {
-          // If we somehow still get a duplicate error, just ignore it
-          set({ isLoading: false });
-          return;
-        }
         throw error;
       }
 
@@ -89,12 +84,15 @@ export const useCategoryStore = create<CategoryStore>((set, get) => ({
         categories: [...categories, data],
         isLoading: false 
       });
+
+      return data;
     } catch (error) {
       console.error('Error in addCategory:', error);
       set({ 
         error: error instanceof Error ? error.message : 'Erreur lors de l\'ajout de la catégorie',
         isLoading: false 
       });
+      return null;
     }
   },
 
