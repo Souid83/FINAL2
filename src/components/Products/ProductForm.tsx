@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useProductStore } from '../../store/productStore';
 import { useCategoryStore } from '../../store/categoryStore';
 import { ImageManager } from './ImageManager';
-import { Image as ImageIcon, Download, Upload, ArrowDown } from 'lucide-react';
+import { Image as ImageIcon, Download, Upload, ArrowDown, Plus } from 'lucide-react';
 import { StockAllocationModal } from './StockAllocationModal';
+import { supabase } from '../../lib/supabase';
 
 const TVA_RATE = 0.20;
 
@@ -90,6 +91,7 @@ export const ProductForm: React.FC<ProductFormProps> = ({
   const [newProductName, setNewProductName] = useState('');
   const [globalStock, setGlobalStock] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
 
   useEffect(() => {
     fetchCategories();
@@ -196,52 +198,20 @@ export const ProductForm: React.FC<ProductFormProps> = ({
       }
       return newData;
     });
-  };
 
-  const updatePriceInputs = (
-    type: 'retail' | 'pro',
-    field: 'price' | 'margin_percent' | 'margin_amount',
-    value: string
-  ) => {
-    if (!/^\d*$/.test(value)) return;
-
-    const purchasePrice = parseFloat(formData.purchase_price_with_fees);
-    if (isNaN(purchasePrice) || purchasePrice <= 0) return;
-
-    const numValue = parseFloat(value);
-    const setPrices = type === 'retail' ? setRetailPrice : setProPrice;
-
-    if (!value) {
-      setPrices({ ht: '', margin: '', ttc: '' });
-      return;
-    }
-
-    if (isNaN(numValue)) return;
-
-    switch (field) {
-      case 'price':
-        setPrices({
-          ht: value,
-          margin: calculateMargin(purchasePrice, numValue).toFixed(2),
-          ttc: calculateTTC(numValue).toFixed(2)
-        });
-        break;
-      case 'margin_percent':
-        const priceHT = calculatePriceFromMargin(purchasePrice, numValue);
-        setPrices({
-          ht: priceHT.toFixed(2),
-          margin: value,
-          ttc: calculateTTC(priceHT).toFixed(2)
-        });
-        break;
-      case 'margin_amount':
-        const ht = calculateHT(numValue);
-        setPrices({
-          ht: ht.toFixed(2),
-          margin: calculateMargin(purchasePrice, ht).toFixed(2),
-          ttc: value
-        });
-        break;
+    if (value) {
+      const parts = [
+        field === 'type' ? upperValue : selectedCategory.type,
+        field === 'brand' ? upperValue : selectedCategory.brand,
+        field === 'model' ? upperValue : selectedCategory.model
+      ].filter(Boolean);
+      
+      if (parts.length > 0) {
+        setFormData(prev => ({
+          ...prev,
+          name: parts.join(' ')
+        }));
+      }
     }
   };
 
@@ -251,8 +221,8 @@ export const ProductForm: React.FC<ProductFormProps> = ({
 
     try {
       const text = await file.text();
-      const rows = text.split('\n');
-      const headers = rows[0].split(',');
+      const rows = text.split('\n').filter(row => row.trim());
+      const headers = rows[0].split(',').map(h => h.trim());
       const products = rows.slice(1).map(row => {
         const values = row.split(',');
         const product: any = {};
@@ -262,8 +232,62 @@ export const ProductForm: React.FC<ProductFormProps> = ({
         return product;
       });
 
+      setImportProgress({ current: 0, total: products.length });
+      setError(null);
+
       for (const product of products) {
-        await addProduct(product);
+        try {
+          // First, check if product exists
+          const { data: existingProduct } = await supabase
+            .from('products')
+            .select('id, stock')
+            .eq('sku', product.sku)
+            .single();
+
+          // Add or update category
+          const category = await addCategory({
+            type: product.category_type.toUpperCase(),
+            brand: product.category_brand.toUpperCase(),
+            model: product.category_model.toUpperCase()
+          });
+
+          const productData = {
+            name: product.name,
+            sku: product.sku,
+            purchase_price_with_fees: parseFloat(product.purchase_price_with_fees),
+            retail_price: parseFloat(product.retail_price),
+            pro_price: parseFloat(product.pro_price),
+            weight_grams: parseInt(product.weight_grams),
+            location: (product.location || '').toUpperCase(),
+            ean: product.ean,
+            stock: parseInt(product.stock),
+            stock_alert: product.stock_alert ? parseInt(product.stock_alert) : null,
+            description: product.description || null,
+            width_cm: product.width_cm ? parseFloat(product.width_cm) : null,
+            height_cm: product.height_cm ? parseFloat(product.height_cm) : null,
+            depth_cm: product.depth_cm ? parseFloat(product.depth_cm) : null,
+            category_id: category?.id || null
+          };
+
+          if (existingProduct) {
+            // Update existing product with new stock
+            await updateProduct(existingProduct.id, {
+              ...productData,
+              stock: existingProduct.stock + parseInt(product.stock)
+            });
+          } else {
+            // Create new product
+            await addProduct(productData);
+          }
+
+          setImportProgress(prev => ({ ...prev, current: prev.current + 1 }));
+        } catch (err) {
+          console.error('Error processing product:', product.sku, err);
+        }
+      }
+
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
       }
 
       if (onSubmitSuccess) {
@@ -272,6 +296,8 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     } catch (error) {
       console.error('Error importing CSV:', error);
       setError('Une erreur est survenue lors de l\'importation du fichier CSV');
+    } finally {
+      setImportProgress({ current: 0, total: 0 });
     }
   };
 
@@ -452,10 +478,24 @@ export const ProductForm: React.FC<ProductFormProps> = ({
                 onChange={handleFileUpload}
                 accept=".csv"
                 className="hidden"
+                ref={fileInputRef}
               />
             </label>
           </div>
         </div>
+        {importProgress.total > 0 && (
+          <div className="mt-4">
+            <div className="w-full bg-gray-200 rounded-full h-2.5">
+              <div 
+                className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                style={{ width: `${(importProgress.current / importProgress.total) * 100}%` }}
+              ></div>
+            </div>
+            <p className="text-sm text-gray-600 mt-2">
+              Importation en cours : {importProgress.current} / {importProgress.total} produits
+            </p>
+          </div>
+        )}
       </div>
 
       <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-6">
@@ -630,7 +670,15 @@ export const ProductForm: React.FC<ProductFormProps> = ({
               <input
                 type="text"
                 value={retailPrice.ht}
-                onChange={(e) => updatePriceInputs('retail', 'price', e.target.value)}
+                onChange={(e) => setRetailPrice(prev => ({
+                  ...prev,
+                  ht: e.target.value,
+                  margin: calculateMargin(
+                    parseFloat(formData.purchase_price_with_fees) || 0,
+                    parseFloat(e.target.value) || 0
+                  ).toFixed(2),
+                  ttc: calculateTTC(parseFloat(e.target.value) || 0).toFixed(2)
+                }))}
                 className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md"
                 placeholder="Prix HT"
               />
@@ -642,7 +690,16 @@ export const ProductForm: React.FC<ProductFormProps> = ({
               <input
                 type="text"
                 value={retailPrice.margin}
-                onChange={(e) => updatePriceInputs('retail', 'margin_percent', e.target.value)}
+                onChange={(e) => {
+                  const margin = parseFloat(e.target.value) || 0;
+                  const purchasePrice = parseFloat(formData.purchase_price_with_fees) || 0;
+                  const ht = calculatePriceFromMargin(purchasePrice, margin);
+                  setRetailPrice({
+                    ht: ht.toFixed(2),
+                    margin: e.target.value,
+                    ttc: calculateTTC(ht).toFixed(2)
+                  });
+                }}
                 className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md text-green-600"
                 placeholder="Marge"
               />
@@ -654,7 +711,18 @@ export const ProductForm: React.FC<ProductFormProps> = ({
               <input
                 type="text"
                 value={retailPrice.ttc}
-                onChange={(e) => updatePriceInputs('retail', 'margin_amount', e.target.value)}
+                onChange={(e) => {
+                  const ttc = parseFloat(e.target.value) || 0;
+                  const ht = calculateHT(ttc);
+                  setRetailPrice({
+                    ht: ht.toFixed(2),
+                    margin: calculateMargin(
+                      parseFloat(formData.purchase_price_with_fees) || 0,
+                      ht
+                    ).toFixed(2),
+                    ttc: e.target.value
+                  });
+                }}
                 className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-md"
                 placeholder="Prix TTC"
               />
@@ -674,7 +742,15 @@ export const ProductForm: React.FC<ProductFormProps> = ({
               <input
                 type="text"
                 value={proPrice.ht}
-                onChange={(e) => updatePriceInputs('pro', 'price', e.target.value)}
+                onChange={(e) => setProPrice(prev => ({
+                  ...prev,
+                  ht: e.target.value,
+                  margin: calculateMargin(
+                    parseFloat(formData.purchase_price_with_fees) || 0,
+                    parseFloat(e.target.value) || 0
+                  ).toFixed(2),
+                  ttc: calculateTTC(parseFloat(e.target.value) || 0).toFixed(2)
+                }))}
                 className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md"
                 placeholder="Prix HT"
               />
@@ -686,7 +762,16 @@ export const ProductForm: React.FC<ProductFormProps> = ({
               <input
                 type="text"
                 value={proPrice.margin}
-                onChange={(e) => updatePriceInputs('pro', 'margin_percent', e.target.value)}
+                onChange={(e) => {
+                  const margin = parseFloat(e.target.value) || 0;
+                  const purchasePrice = parseFloat(formData.purchase_price_with_fees) || 0;
+                  const ht = calculatePriceFromMargin(purchasePrice, margin);
+                  setProPrice({
+                    ht: ht.toFixed(2),
+                    margin: e.target.value,
+                    ttc: calculateTTC(ht).toFixed(2)
+                  });
+                }}
                 className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md text-green-600"
                 placeholder="Marge"
               />
@@ -698,7 +783,18 @@ export const ProductForm: React.FC<ProductFormProps> = ({
               <input
                 type="text"
                 value={proPrice.ttc}
-                onChange={(e) => updatePriceInputs('pro', 'margin_amount', e.target.value)}
+                onChange={(e) => {
+                  const ttc = parseFloat(e.target.value) || 0;
+                  const ht = calculateHT(ttc);
+                  setProPrice({
+                    ht: ht.toFixed(2),
+                    margin: calculateMargin(
+                      parseFloat(formData.purchase_price_with_fees) || 0,
+                      ht
+                    ).toFixed(2),
+                    ttc: e.target.value
+                  });
+                }}
                 className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-md"
                 placeholder="Prix TTC"
               />
@@ -720,6 +816,7 @@ export const ProductForm: React.FC<ProductFormProps> = ({
                 name="width_cm"
                 value={formData.width_cm}
                 onChange={handleChange}
+                
                 className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-md"
                 placeholder="Largeur"
               />

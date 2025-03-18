@@ -153,7 +153,6 @@ export const ProductList: React.FC<ProductListProps> = ({ products: initialProdu
                 const retailMargin = calculateMargin(purchasePrice, retailPrice);
                 const proMargin = calculateMargin(purchasePrice, proPrice);
                 const isLowStock = product.stock_alert !== null && product.stock_total <= product.stock_alert;
-                const totalStock = product.stocks?.reduce((sum, stock) => sum + stock.quantite, 0) || 0;
 
                 return (
                   <tr key={product.id} className={isLowStock ? 'bg-red-50' : ''}>
@@ -213,7 +212,7 @@ export const ProductList: React.FC<ProductListProps> = ({ products: initialProdu
                         className="flex items-center gap-2 hover:text-blue-600"
                       >
                         <Package size={16} />
-                        <span>{totalStock}</span>
+                        <span>{product.stock_total || product.stock || 0}</span>
                       </button>
                       {product.stocks && product.stocks.length > 0 && (
                         <div className="mt-1 space-y-1">
